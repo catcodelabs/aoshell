@@ -27,3 +27,8 @@ rustc-ice-*.txt
 # Added by cargo
 
 /target
+
+
+*.pkg.tar.zst
+PKGBUILD
+/pkg

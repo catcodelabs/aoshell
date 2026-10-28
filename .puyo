@@ -1,12 +1,12 @@
 [package]
 name = "aoshell"
-version = "0.1.0"
+version = "0.1.1"
 pkgrel = 1
 description = "script dispatcher and management utility"
 
 [build]
 cmd = "cargo build --release"
 binary = "target/release/aoshell"
-binary_name = "cs"
+binary_name = "aoshell"
 depends = []
 makedepends = ["cargo"]

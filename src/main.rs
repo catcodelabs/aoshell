@@ -1,19 +1,22 @@
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Instant;
 
 fn print_help() {
     println!("aoshell - A lightweight script dispatcher utility");
     println!("\nUsage:");
-    println!("  cs <script_name> [args...]   Run a custom script");
-    println!("  aoshell init                 Initialize directory and shell alias");
-    println!("  aoshell list                 List all available scripts");
-    println!("  aoshell new <name>           Create a new script template");
-    println!("  aoshell edit <name>          Edit a script using your editor");
-    println!("  aoshell remove <name>        Delete an existing script");
+    println!("  aoshell <script_name> [args...] Run a custom script with timing");
+    println!("  aoshell init                    Initialize scripts directory");
+    println!("  aoshell list                    List all available scripts and descriptions");
+    println!("  aoshell new <name>              Create a new script template");
+    println!("  aoshell edit <name>             Edit a script using your editor");
+    println!("  aoshell rename <old> <new>      Rename an existing script");
+    println!("  aoshell remove <name>           Delete an existing script");
+    println!("  aoshell which <name>            Print absolute path of a script");
+    println!("  aoshell cat <name>              Print script source code");
 }
 
 fn main() {
@@ -30,7 +33,7 @@ fn main() {
     let scripts_dir = PathBuf::from(&home).join(".config/aoshell/scripts");
 
     match command.as_str() {
-        "init" => handle_init(&home, &scripts_dir),
+        "init" => handle_init(&scripts_dir),
         "list" => handle_list(&scripts_dir),
         "new" => {
             if args.len() < 3 {
@@ -48,6 +51,14 @@ fn main() {
             }
             handle_edit(&scripts_dir, &args[2]);
         }
+        "rename" => {
+            if args.len() < 4 {
+                eprintln!("Error: Missing arguments for 'rename'");
+                eprintln!("Usage: aoshell rename <old_name> <new_name>");
+                std::process::exit(1);
+            }
+            handle_rename(&scripts_dir, &args[2], &args[3]);
+        }
         "remove" | "rm" => {
             if args.len() < 3 {
                 eprintln!("Error: Missing script name for 'remove'");
@@ -56,6 +67,22 @@ fn main() {
             }
             handle_remove(&scripts_dir, &args[2]);
         }
+        "which" => {
+            if args.len() < 3 {
+                eprintln!("Error: Missing script name for 'which'");
+                eprintln!("Usage: aoshell which <script_name>");
+                std::process::exit(1);
+            }
+            handle_which(&scripts_dir, &args[2]);
+        }
+        "cat" => {
+            if args.len() < 3 {
+                eprintln!("Error: Missing script name for 'cat'");
+                eprintln!("Usage: aoshell cat <script_name>");
+                std::process::exit(1);
+            }
+            handle_cat(&scripts_dir, &args[2]);
+        }
         script_name => {
             let script_args = &args[2..];
             execute_script(script_name, script_args, &scripts_dir);
@@ -63,54 +90,17 @@ fn main() {
     }
 }
 
-fn handle_init(home: &str, scripts_dir: &PathBuf) {
+fn handle_init(scripts_dir: &PathBuf) {
     if let Err(e) = fs::create_dir_all(scripts_dir) {
         eprintln!("Failed to create scripts directory: {}", e);
         std::process::exit(1);
     }
     println!("[✔] Created directory: {}", scripts_dir.display());
-
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    
-    let (rc_file, alias_line) = if shell.contains("fish") {
-        let fish_config_dir = PathBuf::from(home).join(".config/fish");
-        let _ = fs::create_dir_all(&fish_config_dir);
-        (
-            fish_config_dir.join("config.fish"),
-            "\n# Aoshell alias\nalias cs=\"aoshell\"\n",
-        )
-    } else if shell.contains("zsh") {
-        (
-            PathBuf::from(home).join(".zshrc"),
-            "\n# Aoshell alias\nalias cs=\"aoshell\"\n",
-        )
-    } else {
-        (
-            PathBuf::from(home).join(".bashrc"),
-            "\n# Aoshell alias\nalias cs=\"aoshell\"\n",
-        )
-    };
-
-    let content = fs::read_to_string(&rc_file).unwrap_or_default();
-    if !content.contains("alias cs=") {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&rc_file)
-            .expect("Failed to open shell config file");
-        
-        file.write_all(alias_line.as_bytes())
-            .expect("Failed to write alias to shell config");
-        println!("[✔] Added 'cs' alias to {}", rc_file.display());
-    } else {
-        println!("[ℹ] 'cs' alias already exists in {}", rc_file.display());
-    }
-
-    println!("\nInitialization complete! Restart your shell or run: source {}", rc_file.display());
+    println!("\nInitialization complete!");
 }
 
 fn handle_list(scripts_dir: &PathBuf) {
-    println!("Available aoshell scripts in {}:", scripts_dir.display());
+    println!("Available aoshell scripts in {}:\n", scripts_dir.display());
     if !scripts_dir.exists() {
         println!("  (Directory does not exist yet. Run 'aoshell init')");
         return;
@@ -128,7 +118,23 @@ fn handle_list(scripts_dir: &PathBuf) {
         if let Ok(file_type) = entry.file_type() {
             if file_type.is_file() {
                 if let Some(name) = entry.file_name().to_str() {
-                    println!("  - {}", name);
+                    let path = entry.path();
+                    let mut description = String::new();
+                    
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        for line in content.lines() {
+                            if line.starts_with("# Description:") {
+                                description = line.trim_start_matches("# Description:").trim().to_string();
+                                break;
+                            }
+                        }
+                    }
+
+                    if description.is_empty() {
+                        println!("  - {} (No description)", name);
+                    } else {
+                        println!("  - {} : {}", name, description);
+                    }
                 }
             }
         }
@@ -147,8 +153,11 @@ fn handle_new(scripts_dir: &PathBuf, name: &str) {
         std::process::exit(1);
     }
 
-    let template = "#!/usr/bin/env bash\n\n# Description: Auto-generated script\n\necho \"Running script: {}\"\n";
-    fs::write(&script_path, template.replace("{}", name)).expect("Failed to write script template");
+    let template = format!(
+        "#!/usr/bin/env bash\n# Script: {}\n# Description: \n\necho \"Running script: {}\"\n",
+        name, name
+    );
+    fs::write(&script_path, template).expect("Failed to write script template");
 
     let metadata = fs::metadata(&script_path).expect("Failed to read metadata");
     let mut perms = metadata.permissions();
@@ -181,6 +190,24 @@ fn handle_edit(scripts_dir: &PathBuf, name: &str) {
     std::process::exit(status.code().unwrap_or(1));
 }
 
+fn handle_rename(scripts_dir: &PathBuf, old_name: &str, new_name: &str) {
+    let old_path = scripts_dir.join(old_name);
+    let new_path = scripts_dir.join(new_name);
+
+    if !old_path.is_file() {
+        eprintln!("Error: Script '{}' not found in {:?}", old_name, scripts_dir);
+        std::process::exit(1);
+    }
+
+    if new_path.exists() {
+        eprintln!("Error: Target script name '{}' already exists.", new_path.display());
+        std::process::exit(1);
+    }
+
+    fs::rename(&old_path, &new_path).expect("Failed to rename script file");
+    println!("[✔] Renamed script '{}' to '{}'", old_name, new_name);
+}
+
 fn handle_remove(scripts_dir: &PathBuf, name: &str) {
     let script_path = scripts_dir.join(name);
 
@@ -191,6 +218,30 @@ fn handle_remove(scripts_dir: &PathBuf, name: &str) {
 
     fs::remove_file(&script_path).expect("Failed to delete script file");
     println!("[✔] Removed script: {}", script_path.display());
+}
+
+fn handle_which(scripts_dir: &PathBuf, name: &str) {
+    let script_path = scripts_dir.join(name);
+    if !script_path.is_file() {
+        eprintln!("Error: Script '{}' not found in {:?}", name, scripts_dir);
+        std::process::exit(1);
+    }
+    println!("{}", script_path.display());
+}
+
+fn handle_cat(scripts_dir: &PathBuf, name: &str) {
+    let script_path = scripts_dir.join(name);
+    if !script_path.is_file() {
+        eprintln!("Error: Script '{}' not found in {:?}", name, scripts_dir);
+        std::process::exit(1);
+    }
+    match fs::read_to_string(&script_path) {
+        Ok(contents) => print!("{}", contents),
+        Err(e) => {
+            eprintln!("Failed to read script: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn execute_script(target_script: &str, script_args: &[String], scripts_dir: &PathBuf) {
@@ -208,6 +259,8 @@ fn execute_script(target_script: &str, script_args: &[String], scripts_dir: &Pat
         let _ = fs::set_permissions(&script_path, permissions);
     }
 
+    let start_time = Instant::now();
+
     let status = Command::new(&script_path)
         .args(script_args)
         .status()
@@ -215,6 +268,9 @@ fn execute_script(target_script: &str, script_args: &[String], scripts_dir: &Pat
             eprintln!("Failed to execute script: {}", e);
             std::process::exit(1);
         });
+
+    let duration = start_time.elapsed();
+    println!("\n[ℹ] Execution finished in {:.2?}", duration);
 
     std::process::exit(status.code().unwrap_or(1));
 }
