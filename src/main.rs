@@ -17,6 +17,7 @@ fn print_help() {
     println!("  aoshell remove <name>           Delete an existing script");
     println!("  aoshell which <name>            Print absolute path of a script");
     println!("  aoshell cat <name>              Print script source code");
+    println!("  aoshell args <name>             Print documented arguments for a script");
 }
 
 fn main() {
@@ -82,6 +83,14 @@ fn main() {
                 std::process::exit(1);
             }
             handle_cat(&scripts_dir, &args[2]);
+        }
+        "args" => {
+            if args.len() < 3 {
+                eprintln!("Error: Missing script name for 'args'");
+                eprintln!("Usage: aoshell args <script_name>");
+                std::process::exit(1);
+            }
+            handle_args(&scripts_dir, &args[2]);
         }
         script_name => {
             let script_args = &args[2..];
@@ -154,7 +163,7 @@ fn handle_new(scripts_dir: &PathBuf, name: &str) {
     }
 
     let template = format!(
-        "#!/usr/bin/env bash\n# Script: {}\n# Description: \n\necho \"Running script: {}\"\n",
+        "#!/usr/bin/env bash\n# Script: {}\n# Description: \n# Args: \n\necho \"Running script: {}\"\n",
         name, name
     );
     fs::write(&script_path, template).expect("Failed to write script template");
@@ -241,6 +250,30 @@ fn handle_cat(scripts_dir: &PathBuf, name: &str) {
             eprintln!("Failed to read script: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+fn handle_args(scripts_dir: &PathBuf, name: &str) {
+    let script_path = scripts_dir.join(name);
+    if !script_path.is_file() {
+        eprintln!("Error: Script '{}' not found in {:?}", name, scripts_dir);
+        std::process::exit(1);
+    }
+
+    let mut args_doc = String::new();
+    if let Ok(content) = fs::read_to_string(&script_path) {
+        for line in content.lines() {
+            if line.starts_with("# Args:") {
+                args_doc = line.trim_start_matches("# Args:").trim().to_string();
+                break;
+            }
+        }
+    }
+
+    if args_doc.is_empty() {
+        println!("No arguments documented for script '{}'.", name);
+    } else {
+        println!("Arguments for '{}': {}", name, args_doc);
     }
 }
 

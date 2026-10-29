@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Script: cycle-audio-outputs
+# Description: Cycle Audio Output Sinks
+
+
+echo "Running script: cycle-audio-outputs"
+
+# Get available sink names
+SINKS=($(pactl list short sinks | awk '{print $2}'))
+
+if [ ${#SINKS[@]} -le 1 ]; then
+    notify-send -r 9911 "Audio Output" "Only one audio device detected." -i audio-headphones
+    exit 0
+fi
+
+# Get current default sink
+CURRENT=$(pactl get-default-sink)
+
+# Determine the next sink in the cycle
+NEXT=${SINKS[0]}
+for i in "${!SINKS[@]}"; do
+    if [[ "${SINKS[$i]}" == "$CURRENT" ]]; then
+        NEXT_INDEX=$(( (i + 1) % ${#SINKS[@]} ))
+        NEXT=${SINKS[$NEXT_INDEX]}
+        break
+    fi
+done
+
+# 1. Set the new global default sink
+pactl set-default-sink "$NEXT"
+
+# 2. Move all currently playing application streams to the new sink
+pactl list short sink-inputs | awk '{print $1}' | while read -r input; do
+    pactl move-sink-input "$input" "$NEXT"
+done⏎      

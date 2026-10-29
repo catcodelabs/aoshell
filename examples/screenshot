@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Script: screenshot
+# Description: Take a screenshot with grimblast
+# Args: [--freeze], [output|full|area|active]
+
+SAVE_DIR="$HOME/Pictures/Screenshots"
+mkdir -p "$SAVE_DIR"
+FILENAME="$SAVE_DIR/screenshot_$(date +%Y%m%d_%H%M%S).png"
+
+# Parse optional --freeze flag
+FREEZE=""
+if [[ "$1" == "--freeze" ]]; then
+    FREEZE="--freeze"
+    shift
+fi
+
+# Default target handling
+DEFAULT_TARGET="output"
+if [[ -n "$FREEZE" ]]; then
+    DEFAULT_TARGET="area"
+fi
+
+TARGET="${1:-$DEFAULT_TARGET}"
+
+# Map 'full' to grimblast's 'screen' target for capturing all monitors at once
+if [[ "$TARGET" == "full" ]]; then
+    TARGET="screen"
+fi
+
+# Run grimblast with notification (-n), copying to clipboard and saving to our Pictures folder 
+grimblast -n $FREEZE copysave "$TARGET" "$FILENAME"
