@@ -11,7 +11,7 @@ fn print_help() {
     println!("  aoshell <script_name> [args...] Run a custom script with timing");
     println!("  aoshell init                    Initialize scripts directory");
     println!("  aoshell list                    List all available scripts and descriptions");
-    println!("  aoshell new <name>              Create a new script template");
+    println!("  aoshell new <name> [lang]       Create a new script template (default: bash)");
     println!("  aoshell edit <name>             Edit a script using your editor");
     println!("  aoshell rename <old> <new>      Rename an existing script");
     println!("  aoshell remove <name>           Delete an existing script");
@@ -39,10 +39,12 @@ fn main() {
         "new" => {
             if args.len() < 3 {
                 eprintln!("Error: Missing script name for 'new'");
-                eprintln!("Usage: aoshell new <script_name>");
+                eprintln!("Usage: aoshell new <script_name> [lang]");
                 std::process::exit(1);
             }
-            handle_new(&scripts_dir, &args[2]);
+            let script_name = &args[2];
+            let lang = args.get(3).map(|s| s.as_str()).unwrap_or("bash");
+            handle_new(&scripts_dir, script_name, lang);
         }
         "edit" => {
             if args.len() < 3 {
@@ -99,6 +101,59 @@ fn main() {
     }
 }
 
+fn extract_interpreter(content: &str) -> String {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#!") {
+            let parts: Vec<&str> = trimmed[2..].split_whitespace().collect();
+            if let Some(first) = parts.first() {
+                if *first == "/usr/bin/env" || *first == "/bin/env" {
+                    if let Some(interp) = parts.get(1) {
+                        return interp.to_string();
+                    }
+                } else if let Some(file_name) = PathBuf::from(first).file_name() {
+                    if let Some(name_str) = file_name.to_str() {
+                        return name_str.to_string();
+                    }
+                }
+            }
+        }
+        break;
+    }
+    "unknown".to_string()
+}
+
+fn extract_metadata(content: &str) -> (String, String) {
+    let mut description = String::new();
+    let mut args_doc = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let comment_stripped = if let Some(stripped) = trimmed.strip_prefix('#') {
+            Some(stripped.trim())
+        } else if let Some(stripped) = trimmed.strip_prefix("--") {
+            Some(stripped.trim())
+        } else if let Some(stripped) = trimmed.strip_prefix("//") {
+            Some(stripped.trim())
+        } else {
+            None
+        };
+
+        if let Some(inner) = comment_stripped {
+            if let Some(desc) = inner.strip_prefix("Description:") {
+                if description.is_empty() {
+                    description = desc.trim().to_string();
+                }
+            } else if let Some(args) = inner.strip_prefix("Args:") {
+                if args_doc.is_empty() {
+                    args_doc = args.trim().to_string();
+                }
+            }
+        }
+    }
+    (description, args_doc)
+}
+
 fn handle_init(scripts_dir: &PathBuf) {
     if let Err(e) = fs::create_dir_all(scripts_dir) {
         eprintln!("Failed to create scripts directory: {}", e);
@@ -129,20 +184,18 @@ fn handle_list(scripts_dir: &PathBuf) {
                 if let Some(name) = entry.file_name().to_str() {
                     let path = entry.path();
                     let mut description = String::new();
+                    let mut interpreter = "unknown".to_string();
                     
                     if let Ok(content) = fs::read_to_string(&path) {
-                        for line in content.lines() {
-                            if line.starts_with("# Description:") {
-                                description = line.trim_start_matches("# Description:").trim().to_string();
-                                break;
-                            }
-                        }
+                        let (desc, _) = extract_metadata(&content);
+                        description = desc;
+                        interpreter = extract_interpreter(&content);
                     }
 
                     if description.is_empty() {
-                        println!("  - {} (No description)", name);
+                        println!("  - {} : {} : (No description)", name, interpreter);
                     } else {
-                        println!("  - {} : {}", name, description);
+                        println!("  - {} : {} : {}", name, interpreter, description);
                     }
                 }
             }
@@ -150,7 +203,7 @@ fn handle_list(scripts_dir: &PathBuf) {
     }
 }
 
-fn handle_new(scripts_dir: &PathBuf, name: &str) {
+fn handle_new(scripts_dir: &PathBuf, name: &str, lang: &str) {
     if !scripts_dir.exists() {
         fs::create_dir_all(scripts_dir).expect("Failed to create scripts directory");
     }
@@ -162,10 +215,51 @@ fn handle_new(scripts_dir: &PathBuf, name: &str) {
         std::process::exit(1);
     }
 
-    let template = format!(
-        "#!/usr/bin/env bash\n# Script: {}\n# Description: \n# Args: \n\necho \"Running script: {}\"\n",
-        name, name
-    );
+    let (shebang, comment_prefix, body_example) = match lang.to_lowercase().as_str() {
+        "lua" => (
+            "#!/usr/bin/env lua".to_string(),
+            "--",
+            format!("print(\"Running script: {}\")", name),
+        ),
+        "python" | "py" => (
+            "#!/usr/bin/env python3".to_string(),
+            "#",
+            format!("print(\"Running script: {}\")", name),
+        ),
+        "awk" => (
+            "#!/usr/bin/awk -f".to_string(),
+            "#",
+            "BEGIN {\n    print \"Running script: ".to_string() + name + "\"\n}",
+        ),
+        "sh" => (
+            "#!/bin/sh".to_string(),
+            "#",
+            format!("echo \"Running script: {}\"", name),
+        ),
+        "bash" => (
+            "#!/usr/bin/env bash".to_string(),
+            "#",
+            format!("echo \"Running script: {}\"", name),
+        ),
+        other => (
+            format!("#!/usr/bin/env {}", other),
+            "#",
+            "".to_string(),
+        ),
+    };
+
+    let template = if body_example.is_empty() {
+        format!(
+            "{}\n{} Script: {}\n{} Description: \n{} Args: \n",
+            shebang, comment_prefix, name, comment_prefix, comment_prefix
+        )
+    } else {
+        format!(
+            "{}\n{} Script: {}\n{} Description: \n{} Args: \n\n{}\n",
+            shebang, comment_prefix, name, comment_prefix, comment_prefix, body_example
+        )
+    };
+
     fs::write(&script_path, template).expect("Failed to write script template");
 
     let metadata = fs::metadata(&script_path).expect("Failed to read metadata");
@@ -173,7 +267,7 @@ fn handle_new(scripts_dir: &PathBuf, name: &str) {
     perms.set_mode(perms.mode() | 0o755);
     fs::set_permissions(&script_path, perms).expect("Failed to set permissions");
 
-    println!("[✔] Created new script at: {}", script_path.display());
+    println!("[✔] Created new script with interpreter '{}' at: {}", lang, script_path.display());
 }
 
 fn handle_edit(scripts_dir: &PathBuf, name: &str) {
@@ -262,12 +356,8 @@ fn handle_args(scripts_dir: &PathBuf, name: &str) {
 
     let mut args_doc = String::new();
     if let Ok(content) = fs::read_to_string(&script_path) {
-        for line in content.lines() {
-            if line.starts_with("# Args:") {
-                args_doc = line.trim_start_matches("# Args:").trim().to_string();
-                break;
-            }
-        }
+        let (_, args) = extract_metadata(&content);
+        args_doc = args;
     }
 
     if args_doc.is_empty() {
