@@ -1,6 +1,6 @@
 [package]
 name = "aoshell"
-version = "0.1.1"
+version = "0.1.2"
 pkgrel = 1
 description = "script dispatcher and management utility"
 
