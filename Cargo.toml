@@ -2,6 +2,7 @@
 name = "aoshell"
 version = "0.1.2"
 edition = "2024"
+description = "script dispatcher and management utility"
 
 [dependencies]
 

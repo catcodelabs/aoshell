@@ -6,7 +6,7 @@ use std::process::Command;
 use std::time::Instant;
 
 fn print_help() {
-    println!("aoshell - A lightweight script dispatcher utility");
+    println!("{} v{} - {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_DESCRIPTION"));
     println!("\nUsage:");
     println!("  aoshell <script_name> [args...] Run a custom script with timing");
     println!("  aoshell init                    Initialize scripts directory");
